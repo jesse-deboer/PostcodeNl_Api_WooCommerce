@@ -6,6 +6,7 @@ import { TextInput, ValidationInputError } from '@woocommerce/blocks-components'
 import { validateStoreAddress } from '../utils';
 import { settings } from '..';
 import { useAutocomplete } from './hooks';
+import { mapAddressToFields, getFieldMapping } from '../field-mapping';
 
 let didInit = false;
 
@@ -67,13 +68,9 @@ const AutocompleteInput = (
 			setIsLoading(true);
 			autocomplete.getAddressDetails(selectedItem.context)
 				.then((result) => {
-					const { locality, postcode } = result.address;
-					setAddress({
-						...addressRef.current,
-						address_1: result.streetLine,
-						city: locality,
-						postcode: postcode,
-					});
+					const fieldMapping = getFieldMapping();
+					const updatedAddress = mapAddressToFields(result, addressRef.current, fieldMapping);
+					setAddress(updatedAddress);
 
 					if (settings.displayMode === 'default')
 					{

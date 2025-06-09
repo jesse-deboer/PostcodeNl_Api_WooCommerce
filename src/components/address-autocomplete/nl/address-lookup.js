@@ -5,6 +5,7 @@ import { ValidatedTextInput, Spinner } from '@woocommerce/blocks-components';
 import { VALIDATION_STORE_KEY } from '@woocommerce/block-data';
 import { settings } from '..';
 import { validateStoreAddress } from '../utils';
+import { mapAddressToFields, getFieldMapping } from '../field-mapping';
 import { HouseNumberSelect, LookupError } from '.';
 import {
 	ADDRESS_LOOKUP_DELAY,
@@ -147,17 +148,39 @@ const AddressLookup = (
 		setAddressLookupResult,
 	]);
 
+
+
 	useEffect(() => {
 		const {status, address} = addressLookupResult;
 		if (status === ADDRESS_RESULT_STATUS.VALID)
 		{
 			const house = `${address.houseNumber} ${address.houseNumberAddition ?? ''}`.trim();
-			setAddress({
-				...addressRef.current,
-				address_1: `${address.street} ${house}`,
-				city: address.city,
-				postcode: address.postcode,
-			});
+			
+			// Create address details object similar to international API response
+			const addressDetails = {
+				streetLine: `${address.street} ${house}`,
+				address: {
+					street: address.street,
+					buildingNumber: address.houseNumber,
+					buildingNumberAddition: address.houseNumberAddition,
+					locality: address.city,
+					postcode: address.postcode,
+					province: null, // Netherlands doesn't use provinces in this context
+				}
+			};
+
+			// Use configurable field mapping
+			const fieldMapping = getFieldMapping();
+			console.log('=== Field Mapping Configuration Debug (NL) ===');
+			console.log('Field mapping loaded:', fieldMapping);
+			console.log('PostcodeEuSettings available:', typeof window !== 'undefined' ? !!window.PostcodeEuSettings : 'window not available');
+			if (typeof window !== 'undefined' && window.PostcodeEuSettings) {
+				console.log('PostcodeEuSettings.customFieldMapping:', window.PostcodeEuSettings.customFieldMapping);
+			}
+			console.log('=== End Configuration Debug (NL) ===');
+			
+			const updatedAddress = mapAddressToFields(addressDetails, addressRef.current, fieldMapping);
+			setAddress(updatedAddress);
 
 			if (settings.displayMode === 'default')
 			{

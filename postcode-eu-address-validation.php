@@ -1,9 +1,10 @@
 <?php
+
 /**
  * Plugin Name: Postcode.eu Address Validation
  * Plugin URI: https://www.postcode.eu/products/address-api/implementation
  * Description: Address autocomplete and validation using the Postcode.eu API.
- * Version: 2.5.0
+ * Version: 3.0.0
  * Author: Postcode.nl
  * Author URI: https://www.postcode.nl
  * License: FreeBSD license
@@ -21,9 +22,8 @@ use PostcodeNl\AddressAutocomplete\Main;
 
 defined('ABSPATH') || exit;
 
-spl_autoload_register(static function(string $className) {
-	if (strpos($className, 'PostcodeNl\\AddressAutocomplete\\') !== 0)
-	{
+spl_autoload_register(static function (string $className) {
+	if (strpos($className, 'PostcodeNl\\AddressAutocomplete\\') !== 0) {
 		return;
 	}
 
@@ -33,15 +33,14 @@ spl_autoload_register(static function(string $className) {
 
 new Main();
 
-add_action('before_woocommerce_init', function() {
-	if (!class_exists('Automattic\\WooCommerce\\Utilities\\FeaturesUtil'))
-	{
+add_action('before_woocommerce_init', function () {
+	if (!class_exists('Automattic\\WooCommerce\\Utilities\\FeaturesUtil')) {
 		return;
 	}
 
 	/**
-	* @see https://github.com/woocommerce/woocommerce/wiki/High-Performance-Order-Storage-Upgrade-Recipe-Book#declaring-extension-incompatibility
-	*/
+	 * @see https://github.com/woocommerce/woocommerce/wiki/High-Performance-Order-Storage-Upgrade-Recipe-Book#declaring-extension-incompatibility
+	 */
 	FeaturesUtil::declare_compatibility('custom_order_tables', __FILE__, true);
 
 	// Compatible with WooCommerce Blocks.

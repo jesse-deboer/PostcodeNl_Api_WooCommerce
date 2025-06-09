@@ -11,7 +11,7 @@ defined('ABSPATH') || exit;
 class Main
 {
 	/** @var string The version number of the plugin should be equal to the commented version number in ../../../postcode-eu-address-validation.php */
-	public const VERSION = '2.5.0';
+	public const VERSION = '3.0.0';
 
 	/** @var string Script handle of the autocomplete library. */
 	public const AUTOCOMPLETE_LIBRARY_HANDLE = 'postcode-eu-autocomplete-address-library';
@@ -37,8 +37,7 @@ class Main
 
 	public function __construct()
 	{
-		if (static::$_instance !== null)
-		{
+		if (static::$_instance !== null) {
 			throw new Exception('Instance already initialized use Main::getInstance() instead.');
 		}
 
@@ -55,8 +54,7 @@ class Main
 	public function wordPressInit(): void
 	{
 		add_action('woocommerce_init', function () {
-			if (class_exists('Automattic\\WooCommerce\\Blocks\\Utils\\CartCheckoutUtils'))
-			{
+			if (class_exists('Automattic\\WooCommerce\\Blocks\\Utils\\CartCheckoutUtils')) {
 				static::$_isCheckoutBlockDefault = CartCheckoutUtils::is_checkout_block_default();
 			}
 		});
@@ -85,7 +83,9 @@ class Main
 
 		add_action(
 			'woocommerce_blocks_checkout_block_registration',
-			function($integrationRegistry) { $integrationRegistry->register(new BlocksIntegration()); }
+			function ($integrationRegistry) {
+				$integrationRegistry->register(new BlocksIntegration());
+			}
 		);
 
 		// Fix path for language files.
@@ -94,8 +94,7 @@ class Main
 
 	public function addressFields(array $fields): array
 	{
-		if (!$this->_options->isApiActive())
-		{
+		if (!$this->_options->isApiActive()) {
 			return $fields;
 		}
 
@@ -179,8 +178,7 @@ class Main
 
 	public function enqueueScripts(): void
 	{
-		if (!$this->_options->isApiActive())
-		{
+		if (!$this->_options->isApiActive()) {
 			return;
 		}
 
@@ -215,8 +213,7 @@ class Main
 		);
 
 		// For Classic Checkout and My Account Page:
-		if (!has_block('woocommerce/checkout') || has_block('woocommerce/classic-shortcode'))
-		{
+		if (!has_block('woocommerce/checkout') || has_block('woocommerce/classic-shortcode')) {
 			wp_enqueue_script(
 				'postcode-eu-autocomplete-address-field-mapping',
 				static::$pluginUrl . '/assets/js/addressFieldMapping.js',
@@ -244,6 +241,19 @@ class Main
 					wp_json_encode($this->getSettings())
 				),
 				'before'
+			);
+		}
+
+		// For Block Checkout: Make settings available to block components
+		if (has_block('woocommerce/checkout') && !has_block('woocommerce/classic-shortcode')) {
+			// Create a global PostcodeEuSettings object for block checkout
+			wp_add_inline_script(
+				static::AUTOCOMPLETE_LIBRARY_HANDLE,
+				sprintf(
+					'window.PostcodeEuSettings = %s;',
+					wp_json_encode($this->getSettings())
+				),
+				'after'
 			);
 		}
 
@@ -284,6 +294,7 @@ class Main
 			'autofillIntlBypassLinkText' => esc_html__('Enter an address', 'postcode-eu-address-validation'),
 			'allowAutofillIntlBypass' => $this->_options->allowAutofillIntlBypass,
 			'reverseStreetLineCountries' => ['LU', 'FR', 'GB'],
+			'customFieldMapping' => $this->_options->fieldMapping,
 		];
 	}
 
@@ -293,53 +304,40 @@ class Main
 	 */
 	public function afterCheckoutValidation(array $fields, \WP_Error $errors): void
 	{
-		if (!$this->_options->isApiActive() || $this->_options->hasEditableAddressFields())
-		{
+		if (!$this->_options->isApiActive() || $this->_options->hasEditableAddressFields()) {
 			return;
 		}
 
 		$fieldNames = ['address_1', 'postcode', 'city'];
 		$errorCodes = $errors->get_error_codes();
 
-		if ($this->_isSupportedCountryIso2($fields['billing_country']))
-		{
+		if ($this->_isSupportedCountryIso2($fields['billing_country'])) {
 			$billingRequiredCodes = array_map(fn($name) => 'billing_' . $name . '_required', $fieldNames);
 
-			if (count(array_intersect($errorCodes, $billingRequiredCodes)) > 0)
-			{
-				foreach ($billingRequiredCodes as $code)
-				{
+			if (count(array_intersect($errorCodes, $billingRequiredCodes)) > 0) {
+				foreach ($billingRequiredCodes as $code) {
 					$errors->remove($code);
 				}
 
-				if ($this->_options->isNlModePostcodeOnly() && $fields['billing_country'] === 'NL')
-				{
+				if ($this->_options->isNlModePostcodeOnly() && $fields['billing_country'] === 'NL') {
 					$errors->add('validation', '<strong>' . esc_html__('Please enter a postcode and house number for the billing address.', 'postcode-eu-address-validation') . '</strong>');
-				}
-				else
-				{
+				} else {
 					$errors->add('validation', '<strong>' . esc_html__('Please enter and select a billing address.', 'postcode-eu-address-validation') . '</strong>');
 				}
 			}
 		}
 
-		if ($this->_isSupportedCountryIso2($fields['shipping_country']))
-		{
+		if ($this->_isSupportedCountryIso2($fields['shipping_country'])) {
 			$shippingRequiredCodes = array_map(fn($name) => 'shipping_' . $name . '_required', $fieldNames);
 
-			if (count(array_intersect($errorCodes, $shippingRequiredCodes)) > 0)
-			{
-				foreach ($shippingRequiredCodes as $code)
-				{
+			if (count(array_intersect($errorCodes, $shippingRequiredCodes)) > 0) {
+				foreach ($shippingRequiredCodes as $code) {
 					$errors->remove($code);
 				}
 
-				if ($this->_options->isNlModePostcodeOnly() && $fields['shipping_country'] === 'NL')
-				{
+				if ($this->_options->isNlModePostcodeOnly() && $fields['shipping_country'] === 'NL') {
 					$errors->add('validation', '<strong>' . esc_html__('Please enter a postcode and house number for the shipping address.', 'postcode-eu-address-validation') . '</strong>');
-				}
-				else
-				{
+				} else {
 					$errors->add('validation', '<strong>' . esc_html__('Please enter and select a shipping address.', 'postcode-eu-address-validation') . '</strong>');
 				}
 			}
@@ -348,10 +346,8 @@ class Main
 
 	protected function _isSupportedCountryIso2($countryCode): bool
 	{
-		foreach ($this->_options->getSupportedCountries() as $country)
-		{
-			if ($countryCode === $country['iso2'])
-			{
+		foreach ($this->_options->getSupportedCountries() as $country) {
+			if ($countryCode === $country['iso2']) {
 				return true;
 			}
 		}
@@ -377,8 +373,7 @@ class Main
 
 	public function adminNotice(): void
 	{
-		if (!class_exists('WooCommerce'))
-		{
+		if (!class_exists('WooCommerce')) {
 			printf(
 				'<div class="notice notice-error is-dismissible">
 				<h3>%s</h3>
@@ -391,13 +386,11 @@ class Main
 
 		// Do not show the notices when the user is already on the options page
 		$page = get_current_screen();
-		if ($page !== null && $page->id === 'settings_page_' . Options::MENU_SLUG)
-		{
+		if ($page !== null && $page->id === 'settings_page_' . Options::MENU_SLUG) {
 			return;
 		}
 
-		if (!$this->_options->hasKeyAndSecret())
-		{
+		if (!$this->_options->hasKeyAndSecret()) {
 			vprintf(
 				'<div class="notice notice-error">
 				<h3>%s</h3>
@@ -415,8 +408,7 @@ class Main
 			return;
 		}
 
-		if ($this->_options->isApiActive())
-		{
+		if ($this->_options->isApiActive()) {
 			return;
 		}
 

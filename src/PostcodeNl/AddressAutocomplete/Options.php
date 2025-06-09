@@ -41,7 +41,7 @@ class Options
 	public $apiSecret = '';
 	/**
 	 * @var string With what kind of validation Dutch addresses should be validated,
- 	 *      the options are the international API or legacy postcode and house number validation.
+	 *      the options are the international API or legacy postcode and house number validation.
 	 */
 	public $displayMode = self::DISPLAY_MODE_DEFAULT;
 
@@ -66,6 +66,8 @@ class Options
 	protected $_apiAccountStartDate;
 	/** @var array List of country codes for which the autocomplete API is disabled, even though it is supported. */
 	protected $_apiDisabledCountries;
+	/** @var array Field mapping configuration for block checkout */
+	public $fieldMapping;
 
 	public function __construct()
 	{
@@ -73,12 +75,9 @@ class Options
 		$this->apiKey = $data['apiKey'] ?? '';
 		$this->apiSecret = $data['apiSecret'] ?? '';
 		// Convert legacy option to new mode
-		if (isset($data['netherlandsPostcodeOnly']) && $data['netherlandsPostcodeOnly'])
-		{
+		if (isset($data['netherlandsPostcodeOnly']) && $data['netherlandsPostcodeOnly']) {
 			$this->netherlandsMode = static::NETHERLANDS_MODE_DEFAULT;
-		}
-		else
-		{
+		} else {
 			$this->netherlandsMode = $data['netherlandsMode'] ?? static::NETHERLANDS_MODE_DEFAULT;
 		}
 		$this->displayMode = $data['displayMode'] ?? static::DISPLAY_MODE_DEFAULT;
@@ -92,21 +91,22 @@ class Options
 		$this->_apiAccountUsage = $data['apiAccountUsage'] ?? null;
 		$this->_apiAccountStartDate = $data['apiAccountStartDate'] ?? null;
 		$this->_apiDisabledCountries = $data['apiDisabledCountries'] ?? [];
+		$this->fieldMapping = $data['fieldMapping'] ?? [];
 	}
 
 	public function show(): void
 	{
-		if (!current_user_can(static::REQUIRED_USER_CAPABILITY))
-		{
+		if (!current_user_can(static::REQUIRED_USER_CAPABILITY)) {
 			esc_html_e('Not accessible.', 'postcode-eu-address-validation');
 			return;
 		}
 
+		$this->refreshFieldMapping();
+
 		if (
 			isset($_POST[static::FORM_ACTION_NAME], $_POST[static::FORM_ACTION_NONCE_NAME])
 			&& false !== check_admin_referer(static::FORM_ACTION_NAME, static::FORM_ACTION_NONCE_NAME)
-		)
-		{
+		) {
 			$this->_handleSubmit();
 		}
 
@@ -126,18 +126,18 @@ class Options
 				'The API key is provided by Postcode.eu after completing account registration. You can also request new credentials if you lost them.',
 				'postcode-eu-address-validation'
 			)
-			. '<br/>' .
-			sprintf(
-				'<a href="%s" target="_blank" rel="noopener">%s</a>',
-				esc_url(__('https://account.postcode.eu/', 'postcode-eu-address-validation')),
-				esc_html__('Log into your Postcode.eu account', 'postcode-eu-address-validation')
-			)
-			. '<br/>' .
-			sprintf(
-				'<a href="%s" target="_blank" rel="noopener">%s</a>',
-				esc_url(__('https://www.postcode.eu/products/address-api/prices', 'postcode-eu-address-validation')),
-				esc_html__('Register a new Postcode.eu account', 'postcode-eu-address-validation')
-			)
+				. '<br/>' .
+				sprintf(
+					'<a href="%s" target="_blank" rel="noopener">%s</a>',
+					esc_url(__('https://account.postcode.eu/', 'postcode-eu-address-validation')),
+					esc_html__('Log into your Postcode.eu account', 'postcode-eu-address-validation')
+				)
+				. '<br/>' .
+				sprintf(
+					'<a href="%s" target="_blank" rel="noopener">%s</a>',
+					esc_url(__('https://www.postcode.eu/products/address-api/prices', 'postcode-eu-address-validation')),
+					esc_html__('Register a new Postcode.eu account', 'postcode-eu-address-validation')
+				)
 		);
 		$markup .= $this->_getInputRow(
 			esc_html__('API secret', 'postcode-eu-address-validation'),
@@ -171,21 +171,18 @@ class Options
 				'Which method to use for Dutch address lookups. "Full lookup" allows searching through city and street names, the "Postcode and house number only" method only supports exact postcode and house number lookups but costs less per address.',
 				'postcode-eu-address-validation'
 			)
-			. '<br/>' .
-			sprintf(
-				'<a href="%s" target="_blank" rel="noopener">%s</a>',
-				esc_url(__('https://www.postcode.eu/products/address-api/prices', 'postcode-eu-address-validation')),
-				esc_html__('Product pricing', 'postcode-eu-address-validation')
-			),
+				. '<br/>' .
+				sprintf(
+					'<a href="%s" target="_blank" rel="noopener">%s</a>',
+					esc_url(__('https://www.postcode.eu/products/address-api/prices', 'postcode-eu-address-validation')),
+					esc_html__('Product pricing', 'postcode-eu-address-validation')
+				),
 			$this->getNetherlandsModeDescriptions()
 		);
 
-		if ($this->hasKeyAndSecret())
-		{
-			foreach ($this->getSupportedCountries() as $supportedCountry)
-			{
-				if ($supportedCountry['iso3'] === 'NLD' && $this->netherlandsMode === static::NETHERLANDS_MODE_POSTCODE_ONLY)
-				{
+		if ($this->hasKeyAndSecret()) {
+			foreach ($this->getSupportedCountries() as $supportedCountry) {
+				if ($supportedCountry['iso3'] === 'NLD' && $this->netherlandsMode === static::NETHERLANDS_MODE_POSTCODE_ONLY) {
 					continue;
 				}
 				$markup .= $this->_getInputRow(
@@ -205,6 +202,35 @@ class Options
 			}
 		}
 
+		// Field Mapping Section
+		$markup .= '</table>';
+		$markup .= '<h3>' . esc_html__('Field Mapping Configuration', 'postcode-eu-address-validation') . '</h3>';
+		$markup .= '<p>' . esc_html__('Configure how address parts are mapped to your form fields. Leave blank to skip a field.', 'postcode-eu-address-validation') . '</p>';
+		$markup .= '<table class="form-table">';
+
+		foreach ($this->fieldMapping as $fieldName => $addressPart) {
+			// Create more descriptive labels for different field types
+			if (strpos($fieldName, 'flora') !== false) {
+				$fieldLabel = sprintf(esc_html__('Flora Field: %s', 'postcode-eu-address-validation'), $fieldName);
+				$description = sprintf(esc_html__('Custom Flora field "%s" - configure which address part should populate this field.', 'postcode-eu-address-validation'), $fieldName);
+			} elseif (in_array($fieldName, ['address_1', 'address_2', 'postcode', 'city', 'state'])) {
+				$fieldLabel = sprintf(esc_html__('Standard Field: %s', 'postcode-eu-address-validation'), $fieldName);
+				$description = sprintf(esc_html__('Standard WooCommerce field "%s" - configure which address part should populate this field.', 'postcode-eu-address-validation'), $fieldName);
+			} else {
+				$fieldLabel = sprintf(esc_html__('Custom Field: %s', 'postcode-eu-address-validation'), $fieldName);
+				$description = sprintf(esc_html__('Custom field "%s" - configure which address part should populate this field.', 'postcode-eu-address-validation'), $fieldName);
+			}
+
+			$markup .= $this->_getInputRow(
+				$fieldLabel,
+				'fieldMapping_' . $fieldName,
+				$addressPart,
+				'select',
+				$description,
+				$this->getAddressPartOptions()
+			);
+		}
+
 		$markup .= '</table>';
 		$markup .= vsprintf(
 			'<p class="submit"><input type="submit" name="%s" id="submit" class="button button-primary" value="%s"></p>',
@@ -217,7 +243,8 @@ class Options
 		$markup .= sprintf(
 			'<dl><dt>%s</dt><dd><span class="subscription-status subscription-status-%s">%s</span></dd>',
 			esc_html__('Subscription status', 'postcode-eu-address-validation'),
-			$this->_apiAccountStatus, $this->getApiStatusDescription()
+			$this->_apiAccountStatus,
+			$this->getApiStatusDescription()
 		);
 		$markup .= sprintf(
 			'<dl><dt>%s</dt><dd><span class="subscription-status-date">%s</span></dd>',
@@ -227,23 +254,21 @@ class Options
 				: wp_date(get_option('date_format') . ' ' . get_option('time_format'), $this->_apiAccountInfoDateTime->getTimestamp())
 		);
 
-		if ($this->_apiAccountName !== null)
-		{
+		if ($this->_apiAccountName !== null) {
 			$markup .= sprintf(
 				'<dt>%s</dt><dd>%s</dd>',
-				esc_html__('API account name', 'postcode-eu-address-validation'), $this->_apiAccountName
+				esc_html__('API account name', 'postcode-eu-address-validation'),
+				$this->_apiAccountName
 			);
 		}
-		if ($this->_apiAccountStartDate !== null)
-		{
+		if ($this->_apiAccountStartDate !== null) {
 			$markup .= sprintf(
 				'<dt>%s</dt><dd>%s</dd>',
 				esc_html__('API subscription start date', 'postcode-eu-address-validation'),
 				wp_date(get_option('date_format'), (new DateTime($this->_apiAccountStartDate))->getTimestamp())
 			);
 		}
-		if ($this->_apiAccountLimit !== null && $this->_apiAccountUsage !== null)
-		{
+		if ($this->_apiAccountLimit !== null && $this->_apiAccountUsage !== null) {
 			$markup .= sprintf(
 				'<dt>%s</dt><dd>%s / %s %s</dd>',
 				esc_html__('API subscription usage', 'postcode-eu-address-validation'),
@@ -288,8 +313,7 @@ class Options
 
 	public function getApiStatusDescription(): string
 	{
-		switch ($this->_apiAccountStatus)
-		{
+		switch ($this->_apiAccountStatus) {
 			case static::API_ACCOUNT_STATUS_NEW:
 				return esc_html__('not connected', 'postcode-eu-address-validation');
 			case static::API_ACCOUNT_STATUS_ACTIVE:
@@ -305,8 +329,7 @@ class Options
 
 	public function getApiStatusHint(): string
 	{
-		switch ($this->_apiAccountStatus)
-		{
+		switch ($this->_apiAccountStatus) {
 			case static::API_ACCOUNT_STATUS_NEW:
 			case static::API_ACCOUNT_STATUS_INVALID_CREDENTIALS:
 				return
@@ -328,19 +351,14 @@ class Options
 
 	public function getSupportedCountries(): array
 	{
-		if ($this->_apiAccountInfoDateTime === null || $this->_apiAccountInfoDateTime < new DateTime(static::SUPPORTED_COUNTRY_LIST_EXPIRATION))
-		{
-			try
-			{
+		if ($this->_apiAccountInfoDateTime === null || $this->_apiAccountInfoDateTime < new DateTime(static::SUPPORTED_COUNTRY_LIST_EXPIRATION)) {
+			try {
 				$this->_supportedCountries = Main::getInstance()->getProxy()->getClient()->internationalGetSupportedCountries();
 				$this->_apiAccountInfoDateTime = new DateTime();
 				$this->save();
-			}
-			catch (ClientException $e)
-			{
+			} catch (ClientException $e) {
 				// Continue using previous, if none exists throw the exception
-				if ($this->_supportedCountries === null)
-				{
+				if ($this->_supportedCountries === null) {
 					throw $e;
 				}
 			}
@@ -352,11 +370,9 @@ class Options
 	protected function _getInputRow(string $label, string $name, string $value, string $inputType, ?string $description, array $options = []): string
 	{
 		$id = str_replace('_', '-', static::FORM_NAME_PREFIX . $name);
-		if ($inputType === 'select')
-		{
+		if ($inputType === 'select') {
 			$selectOptions = [];
-			foreach ($options as $option => $optionLabel)
-			{
+			foreach ($options as $option => $optionLabel) {
 				$selectOptions[] = sprintf('<option value="%s"%s>%s</option>', $option, $option === $value ? ' selected' : '', $optionLabel);
 			}
 
@@ -366,9 +382,7 @@ class Options
 				static::FORM_NAME_PREFIX . $name,
 				implode("\n", $selectOptions)
 			);
-		}
-		else
-		{
+		} else {
 			$formElement = sprintf(
 				'<input type="%s" id="%s" value="%s" name="%s" />',
 				$inputType,
@@ -395,11 +409,9 @@ class Options
 		$existingKey = $options->apiKey;
 		$existingSecret = $options->apiSecret;
 		$this->_apiDisabledCountries = [];
-		foreach (array_column($this->getSupportedCountries(), 'iso3') as $countryCode)
-		{
+		foreach (array_column($this->getSupportedCountries(), 'iso3') as $countryCode) {
 			$name = static::FORM_NAME_PREFIX . static::FORM_PER_COUNTRY_NAME . $countryCode;
-			if (($_POST[$name] ?? null) === 'disabled')
-			{
+			if (($_POST[$name] ?? null) === 'disabled') {
 				$this->_apiDisabledCountries[$countryCode] = $countryCode;
 			}
 		}
@@ -412,52 +424,45 @@ class Options
 			'netherlandsMode',
 		];
 
-		foreach ($options as $option => $value)
-		{
+		// Handle field mapping separately
+		$newFieldMapping = [];
+		foreach ($this->fieldMapping as $fieldName => $currentValue) {
+			$postName = static::FORM_NAME_PREFIX . 'fieldMapping_' . $fieldName;
+			$newFieldMapping[$fieldName] = sanitize_text_field($_POST[$postName] ?? '');
+		}
+		$this->fieldMapping = $newFieldMapping;
+
+		foreach ($options as $option => $value) {
 			$postName = static::FORM_NAME_PREFIX . $option;
 			// Only overwrite the API secret if anything has been set
-			if ($option === 'apiSecret' && ($_POST[$postName] ?? '') === '')
-			{
+			if ($option === 'apiSecret' && ($_POST[$postName] ?? '') === '') {
 				continue;
 			}
 
-			if (!in_array($option, $includedOptions, true))
-			{
+			if (!in_array($option, $includedOptions, true)) {
 				continue;
 			}
 
-			if ($option === 'netherlandsPostcodeMode')
-			{
-				if (isset($_POST[$postName]) && array_key_exists($_POST[$postName], $this->getNetherlandsModeDescriptions()))
-				{
+			if ($option === 'netherlandsPostcodeMode') {
+				if (isset($_POST[$postName]) && array_key_exists($_POST[$postName], $this->getNetherlandsModeDescriptions())) {
 					$newValue = sanitize_text_field($_POST[$postName]);
-				}
-				else
-				{
+				} else {
 					$newValue = static::NETHERLANDS_MODE_DEFAULT;
 				}
-			}
-			elseif ($option === 'displayMode')
-			{
-				if (isset($_POST[$postName]) && array_key_exists($_POST[$postName], $this->getDisplayModeDescriptions()))
-				{
+			} elseif ($option === 'displayMode') {
+				if (isset($_POST[$postName]) && array_key_exists($_POST[$postName], $this->getDisplayModeDescriptions())) {
 					$newValue = sanitize_text_field($_POST[$postName]);
-				}
-				else
-				{
+				} else {
 					$newValue = static::DISPLAY_MODE_DEFAULT;
 				}
-			}
-			else
-			{
+			} else {
 				$newValue = sanitize_text_field($_POST[$postName] ?? $value);
 			}
 
 			$options->{$option} = $newValue;
 		}
 
-		if ($options->apiKey !== $existingKey || $options->apiSecret !== $existingSecret)
-		{
+		if ($options->apiKey !== $existingKey || $options->apiSecret !== $existingSecret) {
 			$this->_apiAccountStatus = static::API_ACCOUNT_STATUS_NEW;
 			$this->_apiAccountName = null;
 		}
@@ -466,32 +471,23 @@ class Options
 		Main::getInstance()->loadOptions();
 
 		// Retrieve account information after updating the options
-		if ($this->hasKeyAndSecret())
-		{
-			try
-			{
+		if ($this->hasKeyAndSecret()) {
+			try {
 				$accountInformation = Main::getInstance()->getProxy()->getClient()->accountInfo();
-				if ($accountInformation['hasAccess'] ?? false)
-				{
+				if ($accountInformation['hasAccess'] ?? false) {
 					$this->_apiAccountStatus = static::API_ACCOUNT_STATUS_ACTIVE;
 					$this->_apiAccountInfoDateTime = new DateTime();
-				}
-				else
-				{
+				} else {
 					$this->_apiAccountStatus = static::API_ACCOUNT_STATUS_INACTIVE;
 				}
 				$this->_apiAccountName = $accountInformation['name'] ?? null;
 				$this->_apiAccountLimit = $accountInformation['subscription']['limit'] ?? null;
 				$this->_apiAccountUsage = $accountInformation['subscription']['usage'] ?? null;
 				$this->_apiAccountStartDate = $accountInformation['subscription']['startDate'] ?? null;
-			}
-			catch (AuthenticationException $e)
-			{
+			} catch (AuthenticationException $e) {
 				$this->_apiAccountStatus = static::API_ACCOUNT_STATUS_INVALID_CREDENTIALS;
 				$this->_apiAccountName = null;
-			}
-			catch (ClientException $e)
-			{
+			} catch (ClientException $e) {
 				// Set account status to off
 				$this->_apiAccountStatus = static::API_ACCOUNT_STATUS_NEW;
 				$this->_apiAccountName = null;
@@ -516,6 +512,7 @@ class Options
 			'apiAccountUsage' => $this->_apiAccountUsage,
 			'apiAccountStartDate' => $this->_apiAccountStartDate,
 			'apiDisabledCountries' => $this->_apiDisabledCountries,
+			'fieldMapping' => $this->fieldMapping,
 		];
 	}
 
@@ -532,10 +529,8 @@ class Options
 	public function getEnabledCountries(): array
 	{
 		$enabledCountries = [];
-		foreach ($this->getSupportedCountries() as $supportedCountry)
-		{
-			if (in_array($supportedCountry['iso3'], $this->_apiDisabledCountries, true))
-			{
+		foreach ($this->getSupportedCountries() as $supportedCountry) {
+			if (in_array($supportedCountry['iso3'], $this->_apiDisabledCountries, true)) {
 				continue;
 			}
 			$enabledCountries[$supportedCountry['iso2']] = $supportedCountry;
@@ -545,7 +540,8 @@ class Options
 
 	protected function _getCountryName(array $supportedCountry): string
 	{
-		return WC()->countries->get_countries()[$supportedCountry['iso2']] ?? $supportedCountry['name'];
+		global $woocommerce;
+		return $woocommerce->countries->get_countries()[$supportedCountry['iso2']] ?? $supportedCountry['name'];
 	}
 
 	protected function getDisplayModeDescriptions(): array
@@ -563,5 +559,153 @@ class Options
 			static::NETHERLANDS_MODE_DEFAULT => esc_html__('Full lookup (default)', 'postcode-eu-address-validation'),
 			static::NETHERLANDS_MODE_POSTCODE_ONLY => esc_html__('Postcode and house number only', 'postcode-eu-address-validation'),
 		];
+	}
+
+	protected function getDefaultFieldMapping(): array
+	{
+		// Get all available fields (default + custom additional checkout fields)
+		$allFields = $this->getAllAvailableFields();
+		$defaultMapping = [];
+
+		foreach ($allFields as $fieldName) {
+			// Set sensible defaults based on field name patterns
+			if (strpos($fieldName, 'address_1') !== false) {
+				$defaultMapping[$fieldName] = 'streetAndHouseNumber';
+			} elseif (strpos($fieldName, 'address_2') !== false) {
+				$defaultMapping[$fieldName] = '';
+			} elseif (strpos($fieldName, 'postcode') !== false) {
+				$defaultMapping[$fieldName] = 'postcode';
+			} elseif (strpos($fieldName, 'city') !== false) {
+				$defaultMapping[$fieldName] = 'city';
+			} elseif (strpos($fieldName, 'state') !== false) {
+				$defaultMapping[$fieldName] = 'province';
+			} elseif (strpos($fieldName, 'street') !== false || strpos($fieldName, 'straat') !== false) {
+				$defaultMapping[$fieldName] = 'street';
+			} elseif (strpos($fieldName, 'house') !== false || strpos($fieldName, 'huis') !== false) {
+				if (strpos($fieldName, 'suffix') !== false || strpos($fieldName, 'addition') !== false || strpos($fieldName, 'toevoeging') !== false) {
+					$defaultMapping[$fieldName] = 'houseNumberAddition';
+				} else {
+					$defaultMapping[$fieldName] = 'houseNumber';
+				}
+			} else {
+				// Default to empty (not mapped) for unknown fields
+				$defaultMapping[$fieldName] = '';
+			}
+		}
+
+		return $defaultMapping;
+	}
+
+	protected function getAllAvailableFields(): array
+	{
+		$fields = [
+			// Standard WooCommerce address fields
+			'address_1',
+			'address_2',
+			'postcode',
+			'city',
+			'state'
+		];
+
+		// Add custom additional checkout fields - but only when showing admin page
+		// since fields might not be registered yet during constructor
+		if (is_admin() && did_action('woocommerce_init')) {
+			$additionalFields = $this->getAdditionalCheckoutFields();
+			$fields = array_merge($fields, $additionalFields);
+		}
+
+		return $fields;
+	}
+
+	protected function getAdditionalCheckoutFields(): array
+	{
+		// Dynamically detect all custom checkout fields registered with woocommerce_register_additional_checkout_field
+		$customFields = [];
+
+		// Method 1: Try to get fields from WooCommerce Blocks service
+		if (class_exists('Automattic\\WooCommerce\\Blocks\\Package') && class_exists('Automattic\\WooCommerce\\Blocks\\Domain\\Services\\CheckoutFields')) {
+			try {
+				$package = \Automattic\WooCommerce\Blocks\Package::container();
+				$checkoutFieldsService = $package->get(\Automattic\WooCommerce\Blocks\Domain\Services\CheckoutFields::class);
+
+				// Get all registered additional checkout fields
+				$locations = ['address', 'contact', 'order'];
+				foreach ($locations as $location) {
+					$fields = $checkoutFieldsService->get_fields_for_location($location);
+					foreach ($fields as $fieldId => $fieldConfig) {
+						$customFields[] = $fieldId;
+					}
+				}
+			} catch (Exception $e) {
+				// Continue to fallback method
+			}
+		}
+
+		// Method 2: Fallback - look for common patterns in global variables
+		if (empty($customFields)) {
+			// Check if there are any registered additional checkout fields in global context
+			global $wp_filter;
+
+			// Look for actions that might indicate registered fields
+			if (isset($wp_filter['woocommerce_blocks_checkout_block_registration'])) {
+				// This is a fallback - add some common field patterns if they exist
+				// We'll detect them during runtime rather than at initialization
+				if (function_exists('has_action') && has_action('woocommerce_init')) {
+					// Add some debugging to see what's happening
+					error_log('PostcodeEU Debug: Checking for additional fields during admin display');
+				}
+			}
+		}
+
+		return array_unique($customFields);
+	}
+
+	protected function getAddressPartOptions(): array
+	{
+		return [
+			'' => esc_html__('-- Not mapped --', 'postcode-eu-address-validation'),
+			'street' => esc_html__('Street name only', 'postcode-eu-address-validation'),
+			'houseNumber' => esc_html__('House number only', 'postcode-eu-address-validation'),
+			'houseNumberAddition' => esc_html__('House number addition', 'postcode-eu-address-validation'),
+			'city' => esc_html__('City', 'postcode-eu-address-validation'),
+			'streetAndHouseNumber' => esc_html__('Street + House number combined', 'postcode-eu-address-validation'),
+			'postcode' => esc_html__('Postcode', 'postcode-eu-address-validation'),
+			'houseNumberAndAddition' => esc_html__('House number + addition combined', 'postcode-eu-address-validation'),
+			'province' => esc_html__('Province/State', 'postcode-eu-address-validation'),
+		];
+	}
+
+	/**
+	 * Refresh field mapping to include any newly detected custom fields
+	 */
+	protected function refreshFieldMapping(): void
+	{
+		// Get current field mapping
+		$existingMapping = $this->fieldMapping;
+
+		// Debug: Log what's happening
+		error_log('PostcodeEU Debug: Refreshing field mapping');
+		error_log('PostcodeEU Debug: Existing mapping: ' . wp_json_encode($existingMapping));
+
+		// Get all available fields
+		$allFields = $this->getAllAvailableFields();
+		error_log('PostcodeEU Debug: All available fields: ' . wp_json_encode($allFields));
+
+		// Get additional custom fields specifically
+		$customFields = $this->getAdditionalCheckoutFields();
+		error_log('PostcodeEU Debug: Additional custom fields: ' . wp_json_encode($customFields));
+
+		// Get default mapping for all available fields (including newly detected ones)
+		$defaultMapping = $this->getDefaultFieldMapping();
+		error_log('PostcodeEU Debug: Default mapping: ' . wp_json_encode($defaultMapping));
+
+		// Preserve existing mappings and add defaults for new fields
+		$mergedMapping = array_merge($defaultMapping, $existingMapping);
+
+		// Clean up any duplicate or invalid field mappings
+		$validFields = $this->getAllAvailableFields();
+		$this->fieldMapping = array_intersect_key($mergedMapping, array_flip($validFields));
+
+		error_log('PostcodeEU Debug: Final field mapping: ' . wp_json_encode($this->fieldMapping));
 	}
 }
